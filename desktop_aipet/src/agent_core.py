@@ -1,7 +1,7 @@
 import json
 import asyncio
 import datetime
-from .memory_service import get_context, get_llm_client
+from .memory_service import get_context, get_llm_client, update_session_title, get_session_messages
 from .scheduler_service import schedule_reminder
 from .database import get_db_connection
 
@@ -68,9 +68,10 @@ class ChatAgent:
     async def start_session(self, session_id):
         self.session_id = session_id
 
-    async def chat(self, user_message: str):
+    async def chat_stream(self, user_message: str):
         if not self.session_id:
-            return "Error: No active session."
+            yield "Error: No active session."
+            return
 
         # 1. Save User Message
         timestamp = datetime.datetime.now().isoformat()
@@ -93,30 +94,55 @@ class ChatAgent:
         tool_schemas = self.tool_registry.get_schemas()
 
         response_text = ""
+        tool_calls_accumulated = []
         tool_calls_data = None
 
         try:
              # Check if key is valid
             if not client.api_key or client.api_key == "YOUR_API_KEY_HERE":
                  response_text = "I'm sorry, but I haven't been configured with a valid API key yet."
+                 yield response_text
             else:
-                response = await client.chat.completions.create(
+                stream = await client.chat.completions.create(
                     model=model,
                     messages=messages,
                     tools=tool_schemas,
-                    tool_choice="auto"
+                    tool_choice="auto",
+                    stream=True
                 )
 
-                msg = response.choices[0].message
-                response_text = msg.content
+                async for chunk in stream:
+                    delta = chunk.choices[0].delta
 
-                if msg.tool_calls:
+                    # Handle Content
+                    if delta.content:
+                        response_text += delta.content
+                        yield delta.content
+
+                    # Handle Tool Calls (Accumulate)
+                    if delta.tool_calls:
+                        for tc in delta.tool_calls:
+                            if len(tool_calls_accumulated) <= tc.index:
+                                tool_calls_accumulated.append({"name": "", "args": "", "id": ""})
+
+                            if tc.function:
+                                if tc.function.name:
+                                    tool_calls_accumulated[tc.index]["name"] += tc.function.name
+                                if tc.function.arguments:
+                                    tool_calls_accumulated[tc.index]["args"] += tc.function.arguments
+                            if tc.id:
+                                tool_calls_accumulated[tc.index]["id"] = tc.id
+
+                # Process Tool Calls after stream
+                if tool_calls_accumulated:
                     tool_calls_list = []
-                    for tool_call in msg.tool_calls:
-                         # Execute tool
-                         fname = tool_call.function.name
-                         args = tool_call.function.arguments
+                    for tc in tool_calls_accumulated:
+                         fname = tc["name"]
+                         args = tc["args"]
+
+                         yield f"\n[Executing tool: {fname}...]"
                          result = await self.tool_registry.execute(fname, args)
+                         yield f" Done]\nResult: {result}\n"
 
                          tool_calls_list.append({
                              "name": fname,
@@ -124,13 +150,14 @@ class ChatAgent:
                              "result": str(result)
                          })
 
-                         if response_text is None: response_text = ""
                          response_text += f"\n[Tool {fname} executed: {result}]"
 
                     tool_calls_data = json.dumps(tool_calls_list)
 
         except Exception as e:
-            response_text = f"Error communicating with LLM: {str(e)}"
+            err_msg = f"Error communicating with LLM: {str(e)}"
+            response_text += err_msg
+            yield err_msg
 
         # 4. Save Assistant Message
         timestamp = datetime.datetime.now().isoformat()
@@ -139,4 +166,19 @@ class ChatAgent:
                              (self.session_id, 'assistant', response_text, timestamp, tool_calls_data))
             await db.commit()
 
-        return response_text
+        # 5. Generate Title if needed (Simple heuristic: if session has 2 messages)
+        msgs = await get_session_messages(self.session_id)
+        if len(msgs) <= 2:
+            # Generate title
+            try:
+                if client.api_key and client.api_key != "YOUR_API_KEY_HERE":
+                    title_response = await client.chat.completions.create(
+                        model=model,
+                        messages=[
+                            {"role": "user", "content": f"Generate a short (3-5 words) title for this conversation based on this message: {user_message}"}
+                        ]
+                    )
+                    title = title_response.choices[0].message.content.strip().strip('"')
+                    await update_session_title(self.session_id, title)
+            except Exception:
+                pass # Ignore title generation errors

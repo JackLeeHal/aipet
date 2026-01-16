@@ -31,6 +31,26 @@ async def get_llm_client():
         base_url=base_url
     ), model
 
+async def create_session(session_id: str, title: str):
+    async with get_db_connection() as db:
+        await db.execute('INSERT INTO sessions (id, title) VALUES (?, ?)', (session_id, title))
+        await db.commit()
+
+async def get_all_sessions():
+    async with get_db_connection() as db:
+        async with db.execute('SELECT id, title, created_at FROM sessions ORDER BY created_at DESC') as cursor:
+            return await cursor.fetchall()
+
+async def get_session_messages(session_id: str):
+    async with get_db_connection() as db:
+        async with db.execute('SELECT role, content, timestamp FROM chat_logs WHERE session_id = ? ORDER BY timestamp ASC', (session_id,)) as cursor:
+            return await cursor.fetchall()
+
+async def update_session_title(session_id: str, title: str):
+    async with get_db_connection() as db:
+        await db.execute('UPDATE sessions SET title = ? WHERE id = ?', (title, session_id))
+        await db.commit()
+
 async def get_context(session_id: str):
     """
     1. Fetch the last 5 daily_summaries (descending by date).
