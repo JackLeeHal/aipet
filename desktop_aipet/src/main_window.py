@@ -1,4 +1,5 @@
 import sys
+import os
 import asyncio
 import datetime
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
@@ -41,7 +42,7 @@ class PetLabel(QLabel):
         exit_action.triggered.connect(self.window().exit_app)
         menu.addAction(exit_action)
 
-        menu.exec(event.globalPosition().toPoint())
+        menu.exec(event.globalPos())
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -432,6 +433,12 @@ class MainWindow(QMainWindow):
             self, "Select Pet Image", "", "Images (*.png *.jpg *.jpeg *.bmp *.gif)"
         )
         if file_path:
+            # Verify image
+            pixmap = QPixmap(file_path)
+            if pixmap.isNull():
+                QMessageBox.warning(self, "Error", "Failed to load image. Please select a valid image file.")
+                return
+
             config = load_config()
             if 'pet' not in config:
                 config['pet'] = {}
@@ -444,12 +451,17 @@ class MainWindow(QMainWindow):
         avatar_path = config.get('pet', {}).get('avatar_path')
 
         if avatar_path:
-            pixmap = QPixmap(avatar_path)
-            if not pixmap.isNull():
-                scaled_pixmap = pixmap.scaled(128, 128, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
-                self.pet_label.setPixmap(scaled_pixmap)
-                self.pet_label.setText("") # Clear text if image is set
-                return
+            if not os.path.exists(avatar_path):
+                print(f"Error: Avatar file not found at {avatar_path}")
+            else:
+                pixmap = QPixmap(avatar_path)
+                if not pixmap.isNull():
+                    scaled_pixmap = pixmap.scaled(128, 128, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+                    self.pet_label.setPixmap(scaled_pixmap)
+                    self.pet_label.setText("") # Clear text if image is set
+                    return
+                else:
+                    print(f"Error: Failed to load avatar from {avatar_path}")
 
         # Fallback
         self.pet_label.setText("🤖")
