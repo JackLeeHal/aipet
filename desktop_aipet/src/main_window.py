@@ -2,6 +2,7 @@ import sys
 import os
 import asyncio
 import datetime
+import uuid
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QHBoxLayout, QTextEdit, QLineEdit, QPushButton,
                              QLabel, QDialog, QMessageBox, QTableWidget, QTableWidgetItem, QHeaderView, QDateTimeEdit,
@@ -11,10 +12,13 @@ from PyQt6.QtGui import QColor, QPalette, QPainter, QBrush, QPen, QAction, QPixm
 
 from .agent_core import ChatAgent
 from .scheduler_service import set_alert_callback, get_all_reminders, delete_reminder, update_reminder
-from .memory_service import load_config, save_config
+from .memory_service import load_config, save_config, get_all_sessions, create_session, get_session_messages
 
 class WorkerSignals(QObject):
-    response_received = pyqtSignal(str)
+    response_received = pyqtSignal(str) # Deprecated
+    response_start = pyqtSignal()
+    response_chunk = pyqtSignal(str)
+    response_finished = pyqtSignal()
 
 class PetLabel(QLabel):
     clicked = pyqtSignal()
@@ -27,6 +31,22 @@ class PetLabel(QLabel):
 
     def contextMenuEvent(self, event):
         menu = QMenu(self)
+        menu.setStyleSheet("""
+            QMenu {
+                background-color: white;
+                border: 1px solid #ccc;
+                border-radius: 5px;
+            }
+            QMenu::item {
+                padding: 5px 20px;
+                font-size: 12px;
+                color: #333;
+            }
+            QMenu::item:selected {
+                background-color: #0078d7;
+                color: white;
+            }
+        """)
 
         settings_action = QAction("Modify AI Config", self)
         settings_action.triggered.connect(self.window().open_settings)
@@ -272,6 +292,60 @@ class AlertDialog(QDialog):
         layout.addWidget(ok_btn)
         self.setLayout(layout)
 
+class SessionManagerDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Chat History")
+        self.resize(400, 300)
+        self.layout = QVBoxLayout()
+
+        self.table = QTableWidget()
+        self.table.setColumnCount(2)
+        self.table.setHorizontalHeaderLabels(["Title", "Date"])
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        self.layout.addWidget(self.table)
+
+        btn_layout = QHBoxLayout()
+        open_btn = QPushButton("Open")
+        open_btn.clicked.connect(self.open_session)
+        btn_layout.addWidget(open_btn)
+
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.clicked.connect(self.reject)
+        btn_layout.addWidget(cancel_btn)
+
+        self.layout.addLayout(btn_layout)
+        self.setLayout(self.layout)
+
+        self.selected_session_id = None
+        self.refresh_sessions()
+
+    def refresh_sessions(self):
+        asyncio.create_task(self._load_sessions())
+
+    async def _load_sessions(self):
+        sessions = await get_all_sessions()
+        self.table.setRowCount(0)
+        for s in sessions:
+            # s: id, title, created_at
+            row = self.table.rowCount()
+            self.table.insertRow(row)
+            self.table.setItem(row, 0, QTableWidgetItem(s[1] if s[1] else "New Chat"))
+            self.table.setItem(row, 1, QTableWidgetItem(s[2]))
+            self.table.item(row, 0).setData(Qt.ItemDataRole.UserRole, s[0])
+
+    def open_session(self):
+        rows = self.table.selectedIndexes()
+        if not rows:
+            return
+
+        # Get ID from first column of selected row
+        row_idx = rows[0].row()
+        self.selected_session_id = self.table.item(row_idx, 0).data(Qt.ItemDataRole.UserRole)
+        self.accept()
+
 class ChatOverlay(QWidget):
     def __init__(self, agent: ChatAgent, parent=None):
         super().__init__(parent)
@@ -311,6 +385,19 @@ class ChatOverlay(QWidget):
 
         self.layout = QVBoxLayout()
 
+        # Top Bar
+        top_bar = QHBoxLayout()
+        history_btn = QPushButton("📜 History")
+        history_btn.clicked.connect(self.open_history)
+        top_bar.addWidget(history_btn)
+
+        new_chat_btn = QPushButton("➕ New Chat")
+        new_chat_btn.clicked.connect(self.new_chat)
+        top_bar.addWidget(new_chat_btn)
+
+        top_bar.addStretch()
+        self.layout.addLayout(top_bar)
+
         self.history = QTextEdit()
         self.history.setReadOnly(True)
         self.layout.addWidget(self.history)
@@ -343,40 +430,130 @@ class ChatOverlay(QWidget):
 
         # Signals for async handling
         self.signals = WorkerSignals()
-        self.signals.response_received.connect(self.append_response)
+        self.signals.response_start.connect(self.on_response_start)
+        self.signals.response_chunk.connect(self.on_response_chunk)
+        self.signals.response_finished.connect(self.on_response_finished)
+
+        # State for streaming
+        self.current_ai_text = ""
+        self.ai_message_anchor_pos = 0
+
+        # Start default session
+        self.new_chat()
+
+    def new_chat(self):
+        new_id = str(uuid.uuid4())
+        asyncio.create_task(self._init_session(new_id))
+
+    async def _init_session(self, session_id):
+        await create_session(session_id, None) # Title will be generated later
+        await self.agent.start_session(session_id)
+        self.history.clear()
+
+    def open_history(self):
+        dialog = SessionManagerDialog(self)
+        if dialog.exec():
+            session_id = dialog.selected_session_id
+            if session_id:
+                asyncio.create_task(self.load_session(session_id))
+
+    async def load_session(self, session_id):
+        await self.agent.start_session(session_id)
+        msgs = await get_session_messages(session_id)
+        self.history.clear()
+        for role, content, _ in msgs:
+            if role == 'user':
+                self.append_user_message_html(content)
+            elif role == 'assistant':
+                self.append_ai_message_html(content)
+
+    def format_user_html(self, msg):
+        return f"""
+        <table width="100%" border="0" cellpadding="5">
+            <tr>
+                <td width="20%"></td>
+                <td align="right">
+                    <div style="background-color: #DCF8C6; color: black; padding: 10px; border-radius: 10px;">
+                        {msg}
+                    </div>
+                </td>
+            </tr>
+        </table>
+        """
+
+    def format_ai_html(self, msg):
+        return f"""
+        <table width="100%" border="0" cellpadding="5">
+            <tr>
+                <td align="left">
+                    <div style="background-color: #F0F0F0; color: black; padding: 10px; border-radius: 10px;">
+                        {msg}
+                    </div>
+                </td>
+                <td width="20%"></td>
+            </tr>
+        </table>
+        """
+
+    def append_user_message_html(self, msg):
+        self.history.append(self.format_user_html(msg))
+
+    def append_ai_message_html(self, msg):
+        self.history.append(self.format_ai_html(msg))
 
     def send_message(self):
         msg = self.input_field.text()
         if not msg: return
 
-        # HTML formatting for User
-        user_html = f"""
-        <p align="right" style="margin: 5px;">
-            <span style="background-color: #DCF8C6; color: black; padding: 10px;">
-                {msg}
-            </span>
-        </p>
-        """
-        self.history.append(user_html)
+        self.append_user_message_html(msg)
         self.input_field.clear()
 
         # Async call to agent
         asyncio.create_task(self.process_message(msg))
 
     async def process_message(self, msg):
-        response = await self.agent.chat(msg)
-        self.signals.response_received.emit(response)
+        self.signals.response_start.emit()
+        async for chunk in self.agent.chat_stream(msg):
+            self.signals.response_chunk.emit(chunk)
+        self.signals.response_finished.emit()
 
-    def append_response(self, response):
-        # HTML formatting for Pet
-        pet_html = f"""
-        <p align="left" style="margin: 5px;">
-             <span style="background-color: #F0F0F0; color: black; padding: 10px;">
-                {response}
-            </span>
-        </p>
-        """
-        self.history.append(pet_html)
+    def on_response_start(self):
+        self.current_ai_text = "..."
+        # Append placeholder
+        self.history.append(self.format_ai_html(self.current_ai_text))
+        # Store position?
+        # Actually, since we just appended, the cursor is at the end.
+        # But we need to replace the *last block* repeatedly.
+
+    def on_response_chunk(self, chunk):
+        if self.current_ai_text == "...":
+            self.current_ai_text = ""
+
+        self.current_ai_text += chunk
+        self._update_last_message(self.format_ai_html(self.current_ai_text))
+
+    def on_response_finished(self):
+        # Final update to ensure everything is correct
+        self._update_last_message(self.format_ai_html(self.current_ai_text))
+
+    def _update_last_message(self, html):
+        cursor = self.history.textCursor()
+        cursor.movePosition(cursor.MoveOperation.End)
+        cursor.select(cursor.SelectionType.BlockUnderCursor)
+        # Wait, if we appended a table, is it one block?
+        # HTML might create multiple blocks if it has newlines.
+        # But our format string is one block usually.
+        # If it fails, we might be overwriting wrongly.
+
+        # Alternative: Remove from end until we hit the previous user message?
+        # No, that's dangerous.
+
+        # Let's assume append created a block.
+        # If we select BlockUnderCursor at End, we get the last block.
+        cursor.removeSelectedText()
+        cursor.insertHtml(html)
+        # Move cursor to end again to be safe
+        self.history.moveCursor(cursor.MoveOperation.End)
 
     def open_reminders(self):
         manager = ReminderManager(self)
@@ -464,6 +641,16 @@ class MainWindow(QMainWindow):
                     print(f"Error: Failed to load avatar from {avatar_path}")
 
         # Fallback
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        default_pet_path = os.path.join(base_dir, 'assets', 'pet.png')
+        if os.path.exists(default_pet_path):
+            pixmap = QPixmap(default_pet_path)
+            if not pixmap.isNull():
+                scaled_pixmap = pixmap.scaled(128, 128, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+                self.pet_label.setPixmap(scaled_pixmap)
+                self.pet_label.setText("")
+                return
+
         self.pet_label.setText("🤖")
         self.pet_label.setPixmap(QPixmap()) # Clear pixmap
 
