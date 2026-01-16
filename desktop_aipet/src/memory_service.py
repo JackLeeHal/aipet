@@ -12,6 +12,11 @@ def load_config():
     with open(CONFIG_PATH, 'r') as f:
         return json.load(f)
 
+def save_config(new_config):
+    """Saves the configuration dictionary to the JSON file."""
+    with open(CONFIG_PATH, 'w') as f:
+        json.dump(new_config, f, indent=4)
+
 async def get_llm_client():
     config = load_config()
     api_key = config['llm'].get('api_key')

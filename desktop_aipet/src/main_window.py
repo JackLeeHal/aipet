@@ -3,12 +3,14 @@ import asyncio
 import datetime
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QHBoxLayout, QTextEdit, QLineEdit, QPushButton,
-                             QLabel, QDialog, QMessageBox, QTableWidget, QTableWidgetItem, QHeaderView, QDateTimeEdit)
+                             QLabel, QDialog, QMessageBox, QTableWidget, QTableWidgetItem, QHeaderView, QDateTimeEdit,
+                             QMenu, QFileDialog, QSizeGrip, QFormLayout)
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QObject
-from PyQt6.QtGui import QColor, QPalette, QPainter, QBrush, QPen
+from PyQt6.QtGui import QColor, QPalette, QPainter, QBrush, QPen, QAction, QPixmap
 
 from .agent_core import ChatAgent
 from .scheduler_service import set_alert_callback, get_all_reminders, delete_reminder, update_reminder
+from .memory_service import load_config, save_config
 
 class WorkerSignals(QObject):
     response_received = pyqtSignal(str)
@@ -21,6 +23,25 @@ class PetLabel(QLabel):
         self.drag_start_pos = None
         self.window_start_pos = None
         self.is_dragging = False
+
+    def contextMenuEvent(self, event):
+        menu = QMenu(self)
+
+        settings_action = QAction("Modify AI Config", self)
+        settings_action.triggered.connect(self.window().open_settings)
+        menu.addAction(settings_action)
+
+        image_action = QAction("Change Pet Image", self)
+        image_action.triggered.connect(self.window().change_avatar)
+        menu.addAction(image_action)
+
+        menu.addSeparator()
+
+        exit_action = QAction("Exit", self)
+        exit_action.triggered.connect(self.window().exit_app)
+        menu.addAction(exit_action)
+
+        menu.exec(event.globalPosition().toPoint())
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -53,6 +74,47 @@ class PetLabel(QLabel):
             event.accept()
         else:
             super().mouseReleaseEvent(event)
+
+class SettingsDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("AI Configuration")
+        self.resize(400, 200)
+        layout = QFormLayout()
+
+        self.config = load_config()
+        llm_config = self.config.get('llm', {})
+
+        self.api_key_edit = QLineEdit(llm_config.get('api_key', ''))
+        self.base_url_edit = QLineEdit(llm_config.get('base_url', ''))
+        self.model_edit = QLineEdit(llm_config.get('model', 'gpt-3.5-turbo'))
+
+        layout.addRow("API Key:", self.api_key_edit)
+        layout.addRow("Base URL:", self.base_url_edit)
+        layout.addRow("Model:", self.model_edit)
+
+        btns = QHBoxLayout()
+        save_btn = QPushButton("Save")
+        save_btn.clicked.connect(self.save_settings)
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.clicked.connect(self.reject)
+        btns.addWidget(save_btn)
+        btns.addWidget(cancel_btn)
+        layout.addRow(btns)
+
+        self.setLayout(layout)
+
+    def save_settings(self):
+        if 'llm' not in self.config:
+            self.config['llm'] = {}
+
+        self.config['llm']['api_key'] = self.api_key_edit.text()
+        self.config['llm']['base_url'] = self.base_url_edit.text()
+        self.config['llm']['model'] = self.model_edit.text()
+
+        save_config(self.config)
+        QMessageBox.information(self, "Success", "Settings saved successfully.")
+        self.accept()
 
 class EditReminderDialog(QDialog):
     def __init__(self, msg, time_iso, parent=None):
@@ -266,6 +328,16 @@ class ChatOverlay(QWidget):
         input_layout.addWidget(reminders_btn)
 
         self.layout.addLayout(input_layout)
+
+        # Resize Grip
+        grip_layout = QHBoxLayout()
+        grip_layout.addStretch()
+        self.size_grip = QSizeGrip(self)
+        grip_layout.addWidget(self.size_grip)
+        self.layout.addLayout(grip_layout)
+        # Remove margins from grip layout to keep it tight
+        grip_layout.setContentsMargins(0, 0, 0, 0)
+
         self.setLayout(self.layout)
 
         # Signals for async handling
@@ -339,6 +411,8 @@ class MainWindow(QMainWindow):
         self.alert_signal.connect(self.show_alert)
         set_alert_callback(self.alert_signal.emit)
 
+        self.update_pet_avatar()
+
     def toggle_chat(self):
         if self.chat_overlay.isVisible():
             self.chat_overlay.hide()
@@ -348,3 +422,38 @@ class MainWindow(QMainWindow):
     def show_alert(self, message):
         dialog = AlertDialog(message, self)
         dialog.show()
+
+    def open_settings(self):
+        dialog = SettingsDialog(self)
+        dialog.exec()
+
+    def change_avatar(self):
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "Select Pet Image", "", "Images (*.png *.jpg *.jpeg *.bmp *.gif)"
+        )
+        if file_path:
+            config = load_config()
+            if 'pet' not in config:
+                config['pet'] = {}
+            config['pet']['avatar_path'] = file_path
+            save_config(config)
+            self.update_pet_avatar()
+
+    def update_pet_avatar(self):
+        config = load_config()
+        avatar_path = config.get('pet', {}).get('avatar_path')
+
+        if avatar_path:
+            pixmap = QPixmap(avatar_path)
+            if not pixmap.isNull():
+                scaled_pixmap = pixmap.scaled(128, 128, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+                self.pet_label.setPixmap(scaled_pixmap)
+                self.pet_label.setText("") # Clear text if image is set
+                return
+
+        # Fallback
+        self.pet_label.setText("🤖")
+        self.pet_label.setPixmap(QPixmap()) # Clear pixmap
+
+    def exit_app(self):
+        QApplication.quit()
