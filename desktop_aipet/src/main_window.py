@@ -41,7 +41,7 @@ class PetLabel(QLabel):
         exit_action.triggered.connect(self.window().exit_app)
         menu.addAction(exit_action)
 
-        menu.exec(event.globalPosition().toPoint())
+        menu.exec(event.globalPos())
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
