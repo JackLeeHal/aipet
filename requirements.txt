@@ -1,3 +1,7 @@
 requests
 Pillow
-schedule
+PyQt6
+aiosqlite
+APScheduler
+openai
+qasync
