@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QLabel, QDialog, QMessageBox, QTableWidget, QTableWidgetItem, QHeaderView, QDateTimeEdit,
                              QMenu, QFileDialog, QSizeGrip, QFormLayout)
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QObject
-from PyQt6.QtGui import QColor, QPalette, QPainter, QBrush, QPen, QAction, QPixmap
+from PyQt6.QtGui import QColor, QPalette, QPainter, QBrush, QPen, QAction, QPixmap, QTextCursor
 
 from .agent_core import ChatAgent
 from .scheduler_service import set_alert_callback, get_all_reminders, delete_reminder, update_reminder
@@ -437,6 +437,7 @@ class ChatOverlay(QWidget):
         # State for streaming
         self.current_ai_text = ""
         self.ai_message_anchor_pos = 0
+        self.ai_message_start_pos = 0
 
         # Start default session
         self.new_chat()
@@ -519,11 +520,14 @@ class ChatOverlay(QWidget):
 
     def on_response_start(self):
         self.current_ai_text = "..."
+
+        # Capture start position before appending
+        cursor = self.history.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        self.ai_message_start_pos = cursor.position()
+
         # Append placeholder
         self.history.append(self.format_ai_html(self.current_ai_text))
-        # Store position?
-        # Actually, since we just appended, the cursor is at the end.
-        # But we need to replace the *last block* repeatedly.
 
     def on_response_chunk(self, chunk):
         if self.current_ai_text == "...":
@@ -538,22 +542,12 @@ class ChatOverlay(QWidget):
 
     def _update_last_message(self, html):
         cursor = self.history.textCursor()
-        cursor.movePosition(cursor.MoveOperation.End)
-        cursor.select(cursor.SelectionType.BlockUnderCursor)
-        # Wait, if we appended a table, is it one block?
-        # HTML might create multiple blocks if it has newlines.
-        # But our format string is one block usually.
-        # If it fails, we might be overwriting wrongly.
-
-        # Alternative: Remove from end until we hit the previous user message?
-        # No, that's dangerous.
-
-        # Let's assume append created a block.
-        # If we select BlockUnderCursor at End, we get the last block.
+        cursor.setPosition(self.ai_message_start_pos)
+        cursor.movePosition(QTextCursor.MoveOperation.End, QTextCursor.MoveMode.KeepAnchor)
         cursor.removeSelectedText()
         cursor.insertHtml(html)
         # Move cursor to end again to be safe
-        self.history.moveCursor(cursor.MoveOperation.End)
+        self.history.moveCursor(QTextCursor.MoveOperation.End)
 
     def open_reminders(self):
         manager = ReminderManager(self)
