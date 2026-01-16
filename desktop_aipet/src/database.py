@@ -28,6 +28,15 @@ async def init_db():
                 key_events TEXT
             )
         ''')
+        await db.execute('''
+            CREATE TABLE IF NOT EXISTS reminders (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                message TEXT,
+                run_date DATETIME,
+                status TEXT DEFAULT 'pending',
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
         await db.commit()
 
 def get_db_path():
