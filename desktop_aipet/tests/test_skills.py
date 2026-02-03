@@ -17,7 +17,7 @@ class TestReminderSkill(unittest.TestCase):
         # Patch the database path in the module where get_db_connection is used/defined
         # But actually get_db_connection is imported in reminder.py
         # We need to patch get_db_connection to return connection to our test db
-        self.patcher = patch('desktop_aipet.src.skills.reminder.get_db_connection')
+        self.patcher = patch('desktop_aipet.src.skills.reminder.reminder.get_db_connection')
         self.mock_get_db = self.patcher.start()
         self.mock_get_db.side_effect = lambda: aiosqlite.connect(self.db_path)
 

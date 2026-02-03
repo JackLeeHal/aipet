@@ -4,7 +4,7 @@ import datetime
 from ..bus.event_bus import EventBus
 from ..bus.events import UserMessage, AgentResponseChunk, AgentResponseFinished, SessionChanged
 from ..skills.registry import SkillRegistry
-from ..skills.reminder import ReminderSkill
+from ..skills.loader import SkillLoader
 from ..memory_service import get_context, get_llm_client, update_session_title, get_session_messages
 from ..database import get_db_connection
 
@@ -14,8 +14,12 @@ class AgentBrain:
         self.skill_registry = SkillRegistry()
         self.session_id = None
 
-        # Register default skills
-        self.skill_registry.register(ReminderSkill(bus))
+        # Load skills dynamically
+        loader = SkillLoader(bus)
+        skills = loader.load_skills()
+        for skill in skills:
+            print(f"Loading skill: {skill.name}")
+            self.skill_registry.register(skill)
 
         # Subscribe
         self.bus.subscribe(UserMessage, self.on_user_message)

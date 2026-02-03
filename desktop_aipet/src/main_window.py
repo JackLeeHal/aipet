@@ -3,6 +3,7 @@ import os
 import asyncio
 import datetime
 import uuid
+import markdown
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QHBoxLayout, QTextEdit, QLineEdit, QPushButton,
                              QLabel, QDialog, QMessageBox, QTableWidget, QTableWidgetItem, QHeaderView, QDateTimeEdit,
@@ -463,13 +464,14 @@ class ChatOverlay(QWidget):
                 self.append_ai_message_html(content)
 
     def format_user_html(self, msg):
+        html_msg = markdown.markdown(msg)
         return f"""
         <table width="100%" border="0" cellpadding="5">
             <tr>
                 <td width="20%"></td>
                 <td align="right">
                     <div style="background-color: #DCF8C6; color: black; padding: 10px; border-radius: 10px;">
-                        {msg}
+                        {html_msg}
                     </div>
                 </td>
             </tr>
@@ -477,12 +479,13 @@ class ChatOverlay(QWidget):
         """
 
     def format_ai_html(self, msg):
+        html_msg = markdown.markdown(msg)
         return f"""
         <table width="100%" border="0" cellpadding="5">
             <tr>
                 <td align="left">
                     <div style="background-color: #F0F0F0; color: black; padding: 10px; border-radius: 10px;">
-                        {msg}
+                        {html_msg}
                     </div>
                 </td>
                 <td width="20%"></td>

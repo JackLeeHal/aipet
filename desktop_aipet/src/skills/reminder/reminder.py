@@ -1,8 +1,8 @@
 import datetime
-from .base import Skill
-from ..bus.event_bus import EventBus
-from ..bus.events import ReminderCreated, ReminderUpdated, ReminderDeleted
-from ..database import get_db_connection
+from desktop_aipet.src.skills.base import Skill
+from desktop_aipet.src.bus.event_bus import EventBus
+from desktop_aipet.src.bus.events import ReminderCreated, ReminderUpdated, ReminderDeleted
+from desktop_aipet.src.database import get_db_connection
 
 # Standalone functions for UI and Skill usage
 async def get_all_reminders():
