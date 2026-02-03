@@ -7,3 +7,4 @@ openai
 qasync
 pypdf
 pdf2image
+readability-lxml
