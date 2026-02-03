@@ -5,3 +5,5 @@ aiosqlite
 APScheduler
 openai
 qasync
+pypdf
+pdf2image

@@ -13,10 +13,11 @@ class AgentBrain:
         self.bus = bus
         self.skill_registry = SkillRegistry()
         self.session_id = None
+        self.skill_loader = None
 
         # Load skills dynamically
-        loader = SkillLoader(bus)
-        skills = loader.load_skills()
+        self.skill_loader = SkillLoader(bus)
+        skills = self.skill_loader.load_skills()
         for skill in skills:
             print(f"Loading skill: {skill.name}")
             self.skill_registry.register(skill)
@@ -50,8 +51,13 @@ class AgentBrain:
         # 2. Get Context
         context = await get_context(self.session_id)
 
+        # 3. Get Skills Instructions (Context)
+        skills_instructions = self.skill_loader.get_skills_context_prompt()
+
+        system_prompt = f"You are a helpful desktop pet assistant. Context:\n{context}\n\n{skills_instructions}"
+
         messages = [
-            {"role": "system", "content": f"You are a helpful desktop pet assistant. Context:\n{context}"},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_message}
         ]
 
