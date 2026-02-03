@@ -3,24 +3,31 @@ import asyncio
 from PyQt6.QtWidgets import QApplication
 from qasync import QEventLoop
 from .database import init_db
-from .scheduler_service import start_scheduler
-from .agent_core import ChatAgent
+from .bus.event_bus import EventBus
+from .agent.brain import AgentBrain
+from .cron.scheduler import CronService
+from .channels.desktop import DesktopChannel
 from .main_window import MainWindow
 
 async def main_async():
     # Initialize DB
     await init_db()
 
-    # Initialize Scheduler
-    start_scheduler()
+    # Initialize Components
+    bus = EventBus()
+    agent = AgentBrain(bus)
+    cron = CronService(bus)
+    channel = DesktopChannel(bus)
 
-    # Initialize Agent
-    agent = ChatAgent()
+    # Start Services
+    await cron.start()
+
     # Start a default session
     await agent.start_session(session_id="default_session")
+    channel.set_session_id("default_session")
 
     # Initialize GUI
-    window = MainWindow(agent)
+    window = MainWindow(channel)
     window.show()
 
     # Keep the application running

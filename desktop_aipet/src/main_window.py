@@ -10,15 +10,9 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QObject
 from PyQt6.QtGui import QColor, QPalette, QPainter, QBrush, QPen, QAction, QPixmap, QTextCursor
 
-from .agent_core import ChatAgent
-from .scheduler_service import set_alert_callback, get_all_reminders, delete_reminder, update_reminder
+from .channels.desktop import DesktopChannel
+from .skills.reminder import get_all_reminders, delete_reminder, update_reminder
 from .memory_service import load_config, save_config, get_all_sessions, create_session, get_session_messages
-
-class WorkerSignals(QObject):
-    response_received = pyqtSignal(str) # Deprecated
-    response_start = pyqtSignal()
-    response_chunk = pyqtSignal(str)
-    response_finished = pyqtSignal()
 
 class PetLabel(QLabel):
     clicked = pyqtSignal()
@@ -174,8 +168,9 @@ class EditReminderDialog(QDialog):
         return self.msg_edit.text(), self.time_edit.dateTime().toPyDateTime().isoformat()
 
 class ReminderManager(QDialog):
-    def __init__(self, parent=None):
+    def __init__(self, bus, parent=None):
         super().__init__(parent)
+        self.bus = bus
         self.setWindowTitle("Manage Reminders")
         self.resize(500, 300)
         self.layout = QVBoxLayout()
@@ -232,7 +227,7 @@ class ReminderManager(QDialog):
 
     async def _delete_reminders(self, ids):
         for r_id in ids:
-            await delete_reminder(r_id)
+            await delete_reminder(r_id, self.bus)
         await self._load_reminders()
 
     def edit_selected(self):
@@ -252,7 +247,7 @@ class ReminderManager(QDialog):
             asyncio.create_task(self._update_reminder(r_id, new_msg, new_time))
 
     async def _update_reminder(self, r_id, msg, time):
-        success = await update_reminder(r_id, msg, time)
+        success = await update_reminder(r_id, msg, time, self.bus)
         if success:
             await self._load_reminders()
         else:
@@ -347,9 +342,9 @@ class SessionManagerDialog(QDialog):
         self.accept()
 
 class ChatOverlay(QWidget):
-    def __init__(self, agent: ChatAgent, parent=None):
+    def __init__(self, channel: DesktopChannel, parent=None):
         super().__init__(parent)
-        self.agent = agent
+        self.channel = channel
 
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setStyleSheet("""
@@ -429,10 +424,9 @@ class ChatOverlay(QWidget):
         self.setLayout(self.layout)
 
         # Signals for async handling
-        self.signals = WorkerSignals()
-        self.signals.response_start.connect(self.on_response_start)
-        self.signals.response_chunk.connect(self.on_response_chunk)
-        self.signals.response_finished.connect(self.on_response_finished)
+        # Using channel signals instead of WorkerSignals
+        self.channel.response_chunk.connect(self.on_response_chunk)
+        self.channel.response_finished.connect(self.on_response_finished)
 
         # State for streaming
         self.current_ai_text = ""
@@ -448,7 +442,7 @@ class ChatOverlay(QWidget):
 
     async def _init_session(self, session_id):
         await create_session(session_id, None) # Title will be generated later
-        await self.agent.start_session(session_id)
+        await self.channel.switch_session(session_id)
         self.history.clear()
 
     def open_history(self):
@@ -459,7 +453,7 @@ class ChatOverlay(QWidget):
                 asyncio.create_task(self.load_session(session_id))
 
     async def load_session(self, session_id):
-        await self.agent.start_session(session_id)
+        await self.channel.switch_session(session_id)
         msgs = await get_session_messages(session_id)
         self.history.clear()
         for role, content, _ in msgs:
@@ -509,14 +503,13 @@ class ChatOverlay(QWidget):
         self.append_user_message_html(msg)
         self.input_field.clear()
 
-        # Async call to agent
+        # Async call to agent via channel
         asyncio.create_task(self.process_message(msg))
 
     async def process_message(self, msg):
-        self.signals.response_start.emit()
-        async for chunk in self.agent.chat_stream(msg):
-            self.signals.response_chunk.emit(chunk)
-        self.signals.response_finished.emit()
+        self.on_response_start()
+        await self.channel.send_user_message(msg)
+        # Note: chunks come via signal
 
     def on_response_start(self):
         self.current_ai_text = "..."
@@ -550,15 +543,13 @@ class ChatOverlay(QWidget):
         self.history.moveCursor(QTextCursor.MoveOperation.End)
 
     def open_reminders(self):
-        manager = ReminderManager(self)
+        manager = ReminderManager(self.channel.bus, self)
         manager.exec()
 
 class MainWindow(QMainWindow):
-    alert_signal = pyqtSignal(str)
-
-    def __init__(self, agent):
+    def __init__(self, channel: DesktopChannel):
         super().__init__()
-        self.agent = agent
+        self.channel = channel
 
         # Transparent window setup
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint)
@@ -576,12 +567,12 @@ class MainWindow(QMainWindow):
         self.layout.addWidget(self.pet_label)
 
         # Chat Overlay
-        self.chat_overlay = ChatOverlay(self.agent)
+        self.chat_overlay = ChatOverlay(self.channel)
         self.chat_overlay.hide()
         self.layout.addWidget(self.chat_overlay)
 
-        self.alert_signal.connect(self.show_alert)
-        set_alert_callback(self.alert_signal.emit)
+        # Connect alert signal
+        self.channel.reminder_triggered.connect(self.show_alert)
 
         self.update_pet_avatar()
 
