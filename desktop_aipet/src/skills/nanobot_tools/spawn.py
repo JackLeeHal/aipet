@@ -40,6 +40,11 @@ class SpawnTool(Tool):
     @property
     def parameters(self) -> dict[str, Any]:
         return {
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "description": self.description,
+                "parameters": {
             "type": "object",
             "properties": {
                 "task": {
@@ -52,6 +57,8 @@ class SpawnTool(Tool):
                 },
             },
             "required": ["task"],
+        }
+            }
         }
 
     async def execute(self, task: str, label: str | None = None, **kwargs: Any) -> str:

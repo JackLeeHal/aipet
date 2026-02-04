@@ -34,12 +34,19 @@ class WebSearchTool(Tool):
     name = "web_search"
     description = "Search the web. Returns titles, URLs, and snippets."
     parameters = {
+        "type": "function",
+        "function": {
+            "name": name,
+            "description": description,
+            "parameters": {
         "type": "object",
         "properties": {
             "query": {"type": "string", "description": "Search query"},
             "count": {"type": "integer", "description": "Results (1-10)", "minimum": 1, "maximum": 10}
         },
         "required": ["query"]
+    }
+        }
     }
 
     def __init__(self, api_key: str | None = None, max_results: int = 5):
@@ -81,6 +88,11 @@ class WebFetchTool(Tool):
     name = "web_fetch"
     description = "Fetch URL and extract readable content (HTML → markdown/text)."
     parameters = {
+        "type": "function",
+        "function": {
+            "name": name,
+            "description": description,
+            "parameters": {
         "type": "object",
         "properties": {
             "url": {"type": "string", "description": "URL to fetch"},
@@ -88,6 +100,8 @@ class WebFetchTool(Tool):
             "maxChars": {"type": "integer", "minimum": 100}
         },
         "required": ["url"]
+    }
+        }
     }
 
     def __init__(self, max_chars: int = 50000):

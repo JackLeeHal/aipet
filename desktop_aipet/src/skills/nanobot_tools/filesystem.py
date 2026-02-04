@@ -20,6 +20,11 @@ class ReadFileTool(Tool):
     @property
     def parameters(self) -> dict[str, Any]:
         return {
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "description": self.description,
+                "parameters": {
             "type": "object",
             "properties": {
                 "path": {
@@ -28,6 +33,8 @@ class ReadFileTool(Tool):
                 }
             },
             "required": ["path"]
+        }
+            }
         }
 
     async def execute(self, path: str, **kwargs: Any) -> str:
@@ -60,6 +67,11 @@ class WriteFileTool(Tool):
     @property
     def parameters(self) -> dict[str, Any]:
         return {
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "description": self.description,
+                "parameters": {
             "type": "object",
             "properties": {
                 "path": {
@@ -72,6 +84,8 @@ class WriteFileTool(Tool):
                 }
             },
             "required": ["path", "content"]
+        }
+            }
         }
 
     async def execute(self, path: str, content: str, **kwargs: Any) -> str:
@@ -100,6 +114,11 @@ class EditFileTool(Tool):
     @property
     def parameters(self) -> dict[str, Any]:
         return {
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "description": self.description,
+                "parameters": {
             "type": "object",
             "properties": {
                 "path": {
@@ -116,6 +135,8 @@ class EditFileTool(Tool):
                 }
             },
             "required": ["path", "old_text", "new_text"]
+        }
+            }
         }
 
     async def execute(self, path: str, old_text: str, new_text: str, **kwargs: Any) -> str:
@@ -158,6 +179,11 @@ class ListDirTool(Tool):
     @property
     def parameters(self) -> dict[str, Any]:
         return {
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "description": self.description,
+                "parameters": {
             "type": "object",
             "properties": {
                 "path": {
@@ -166,6 +192,8 @@ class ListDirTool(Tool):
                 }
             },
             "required": ["path"]
+        }
+            }
         }
 
     async def execute(self, path: str, **kwargs: Any) -> str:

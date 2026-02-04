@@ -25,6 +25,11 @@ class ExecTool(Tool):
     @property
     def parameters(self) -> dict[str, Any]:
         return {
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "description": self.description,
+                "parameters": {
             "type": "object",
             "properties": {
                 "command": {
@@ -37,6 +42,8 @@ class ExecTool(Tool):
                 }
             },
             "required": ["command"]
+        }
+            }
         }
 
     async def execute(self, command: str, working_dir: str | None = None, **kwargs: Any) -> str:
