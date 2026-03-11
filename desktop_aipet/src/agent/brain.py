@@ -5,8 +5,9 @@ from ..bus.event_bus import EventBus
 from ..bus.events import UserMessage, AgentResponseChunk, AgentResponseFinished, SessionChanged
 from ..skills.registry import SkillRegistry
 from ..skills.reminder import ReminderSkill
-from ..memory_service import get_context, get_llm_client, update_session_title, get_session_messages
+from ..memory_service import get_context, update_session_title, get_session_messages, load_config
 from ..database import get_db_connection
+from ..llm.factory import get_provider
 
 class AgentBrain:
     def __init__(self, bus: EventBus):
@@ -58,111 +59,69 @@ class AgentBrain:
 
     async def _run_react_loop(self, messages, max_turns=5):
         turn = 0
+        config = load_config()
+        provider = get_provider(config)
+        tool_schemas = self.skill_registry.get_schemas()
+
         while turn < max_turns:
             turn += 1
-            client, model = await get_llm_client()
-            tool_schemas = self.skill_registry.get_schemas()
-
-            response_text = ""
-            tool_calls_accumulated = []
-            tool_calls_data = None
-
             try:
-                if not client.api_key or client.api_key == "YOUR_API_KEY_HERE":
-                     err = "I'm sorry, but I haven't been configured with a valid API key yet."
-                     await self.bus.publish(AgentResponseChunk(content=err, session_id=self.session_id))
-                     response_text = err
-                     break
+                async def on_chunk(content: str):
+                    await self.bus.publish(AgentResponseChunk(content=content, session_id=self.session_id))
 
-                stream = await client.chat.completions.create(
-                    model=model,
+                response = await provider.chat_stream(
                     messages=messages,
                     tools=tool_schemas,
-                    tool_choice="auto",
-                    stream=True
+                    on_chunk=on_chunk
                 )
-
-                async for chunk in stream:
-                    delta = chunk.choices[0].delta
-
-                    if delta.content:
-                        response_text += delta.content
-                        await self.bus.publish(AgentResponseChunk(content=delta.content, session_id=self.session_id))
-
-                    if delta.tool_calls:
-                        for tc in delta.tool_calls:
-                            if len(tool_calls_accumulated) <= tc.index:
-                                tool_calls_accumulated.append({"name": "", "args": "", "id": ""})
-
-                            if tc.function:
-                                if tc.function.name:
-                                    tool_calls_accumulated[tc.index]["name"] += tc.function.name
-                                if tc.function.arguments:
-                                    tool_calls_accumulated[tc.index]["args"] += tc.function.arguments
-                            if tc.id:
-                                tool_calls_accumulated[tc.index]["id"] = tc.id
 
                 # Save assistant message
                 timestamp = datetime.datetime.now().isoformat()
-
-                # Prepare tool calls data for DB
-                if tool_calls_accumulated:
-                    tool_calls_list = []
-                    for tc in tool_calls_accumulated:
-                        tool_calls_list.append({
-                             "name": tc["name"],
-                             "args": tc["args"]
-                        })
-                    tool_calls_data = json.dumps(tool_calls_list)
+                tool_calls_data = None
+                if response.tool_calls:
+                    tool_calls_data = json.dumps([{
+                        "name": tc["function"]["name"],
+                        "args": tc["function"]["arguments"]
+                    } for tc in response.tool_calls])
 
                 async with get_db_connection() as db:
                     await db.execute('INSERT INTO chat_logs (session_id, role, content, timestamp, tool_calls) VALUES (?, ?, ?, ?, ?)',
-                                     (self.session_id, 'assistant', response_text, timestamp, tool_calls_data))
+                                     (self.session_id, 'assistant', response.content, timestamp, tool_calls_data))
                     await db.commit()
 
-                # Add assistant response to messages for next turn
-                assistant_msg = {"role": "assistant", "content": response_text}
-                if tool_calls_accumulated:
-                     assistant_msg["tool_calls"] = []
-                     for tc in tool_calls_accumulated:
-                         assistant_msg["tool_calls"].append({
-                             "id": tc["id"],
-                             "type": "function",
-                             "function": {"name": tc["name"], "arguments": tc["args"]}
-                         })
+                assistant_msg = {"role": "assistant", "content": response.content}
+                if response.tool_calls:
+                    assistant_msg["tool_calls"] = [{
+                        "id": tc["id"],
+                        "type": "function",
+                        "function": {"name": tc["function"]["name"], "arguments": tc["function"]["arguments"]}
+                    } for tc in response.tool_calls]
                 messages.append(assistant_msg)
 
-                # Process Tools
-                if tool_calls_accumulated:
-                    for tc in tool_calls_accumulated:
-                        fname = tc["name"]
-                        args = tc["args"]
-                        tid = tc["id"]
+                if response.stop_reason != "tool_use":
+                    break
 
-                        # Notify UI we are executing
-                        await self.bus.publish(AgentResponseChunk(content=f"\n[Executing {fname}...]", session_id=self.session_id))
+                for tc in response.tool_calls:
+                    fname = tc["function"]["name"]
+                    args = tc["function"]["arguments"]
+                    tid = tc["id"]
 
-                        result = await self.skill_registry.execute(fname, args)
+                    await self.bus.publish(AgentResponseChunk(content=f"\n[Executing {fname}...]", session_id=self.session_id))
+                    result = await self.skill_registry.execute(fname, args)
+                    await self.bus.publish(AgentResponseChunk(content=f" Done]\n", session_id=self.session_id))
 
-                        await self.bus.publish(AgentResponseChunk(content=f" Done]\n", session_id=self.session_id))
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tid,
+                        "content": str(result)
+                    })
 
-                        # Append tool result
-                        messages.append({
-                            "role": "tool",
-                            "tool_call_id": tid,
-                            "content": str(result)
-                        })
-
-                    # Continue loop to let LLM respond to tool output
-                    continue
-
-                # If no tool calls, we are done
+            except ValueError as ve:
+                await self.bus.publish(AgentResponseChunk(content=str(ve), session_id=self.session_id))
                 break
-
             except Exception as e:
                 err_msg = f"Error communicating with LLM: {str(e)}"
                 await self.bus.publish(AgentResponseChunk(content=err_msg, session_id=self.session_id))
-                response_text += err_msg
                 break
 
         await self.bus.publish(AgentResponseFinished(session_id=self.session_id))
@@ -171,15 +130,21 @@ class AgentBrain:
         msgs = await get_session_messages(self.session_id)
         if len(msgs) <= 2:
             try:
-                client, model = await get_llm_client()
-                if client.api_key and client.api_key != "YOUR_API_KEY_HERE":
-                    title_response = await client.chat.completions.create(
-                        model=model,
-                        messages=[
-                            {"role": "user", "content": f"Generate a short (3-5 words) title for this conversation based on this message: {user_message}"}
-                        ]
-                    )
-                    title = title_response.choices[0].message.content.strip().strip('"')
-                    await update_session_title(self.session_id, title)
+                config = load_config()
+                provider = get_provider(config)
+
+                # Check for dummy/missing api keys
+                try:
+                    await provider._check_api_key()
+                except ValueError:
+                    return
+
+                response = await provider.chat(
+                    messages=[
+                        {"role": "user", "content": f"Generate a short (3-5 words) title for this conversation based on this message: {user_message}"}
+                    ]
+                )
+                title = response.content.strip().strip('"')
+                await update_session_title(self.session_id, title)
             except Exception:
                 pass
