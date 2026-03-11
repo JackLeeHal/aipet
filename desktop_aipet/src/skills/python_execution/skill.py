@@ -20,21 +20,14 @@ class PythonExecutionSkill(Skill):
     @property
     def parameters(self) -> dict:
         return {
-            "type": "function",
-            "function": {
-                "name": "execute_python",
-                "description": "Execute Python code and return stdout/stderr.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "code": {
-                            "type": "string",
-                            "description": "The Python code to execute."
-                        }
-                    },
-                    "required": ["code"]
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string",
+                    "description": "The Python code to execute."
                 }
-            }
+            },
+            "required": ["code"]
         }
 
     async def execute(self, code: str) -> str:

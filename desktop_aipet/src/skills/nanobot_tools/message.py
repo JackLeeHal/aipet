@@ -43,11 +43,6 @@ class SendMessageTool(Tool):
     @property
     def parameters(self) -> dict[str, Any]:
         return {
-            "type": "function",
-            "function": {
-                "name": self.name,
-                "description": self.description,
-                "parameters": {
             "type": "object",
             "properties": {
                 "content": {
@@ -64,8 +59,6 @@ class SendMessageTool(Tool):
                 }
             },
             "required": ["content"]
-        }
-            }
         }
 
     async def execute(

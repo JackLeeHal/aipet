@@ -12,7 +12,20 @@ class SkillRegistry:
 
     def get_schemas(self):
         # Return list of schemas in the format OpenAI expects
-        return [s.parameters for s in self.skills.values()]
+        schemas = []
+        for s in self.skills.values():
+            if hasattr(s, 'to_schema'):
+                schemas.append(s.to_schema())
+            else:
+                schemas.append({
+                    "type": "function",
+                    "function": {
+                        "name": s.name,
+                        "description": s.description,
+                        "parameters": s.parameters
+                    }
+                })
+        return schemas
 
     async def execute(self, name: str, arguments_json: str) -> str:
         if name in self.skills:

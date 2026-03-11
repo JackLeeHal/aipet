@@ -69,19 +69,12 @@ class ReminderSkill(Skill):
     @property
     def parameters(self) -> dict:
         return {
-            "type": "function",
-            "function": {
-                "name": "set_reminder",
-                "description": "Set a reminder for a specific time.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "message": {"type": "string", "description": "The reminder message."},
-                        "time_iso": {"type": "string", "description": "ISO 8601 format time (e.g., 2023-10-27T14:30:00)."}
-                    },
-                    "required": ["message", "time_iso"]
-                }
-            }
+            "type": "object",
+            "properties": {
+                "message": {"type": "string", "description": "The reminder message."},
+                "time_iso": {"type": "string", "description": "ISO 8601 format time (e.g., 2023-10-27T14:30:00)."}
+            },
+            "required": ["message", "time_iso"]
         }
 
     async def execute(self, message: str, time_iso: str) -> str:
