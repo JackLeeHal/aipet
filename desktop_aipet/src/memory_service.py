@@ -2,7 +2,7 @@ import json
 import os
 import datetime
 from .database import get_db_connection
-from openai import AsyncOpenAI
+from .llm.factory import get_provider
 
 CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'config', 'config.json')
 
@@ -16,20 +16,6 @@ def save_config(new_config):
     """Saves the configuration dictionary to the JSON file."""
     with open(CONFIG_PATH, 'w') as f:
         json.dump(new_config, f, indent=4)
-
-async def get_llm_client():
-    config = load_config()
-    api_key = config['llm'].get('api_key')
-    base_url = config['llm'].get('base_url')
-    model = config['llm'].get('model', 'gpt-3.5-turbo')
-
-    if not api_key or api_key == "YOUR_API_KEY_HERE":
-        pass
-
-    return AsyncOpenAI(
-        api_key=api_key,
-        base_url=base_url
-    ), model
 
 async def create_session(session_id: str, title: str):
     async with get_db_connection() as db:
@@ -110,20 +96,22 @@ async def perform_daily_summary():
 
     # Call LLM
     try:
-        client, model = await get_llm_client()
-        if not client.api_key or client.api_key == "YOUR_API_KEY_HERE":
-             print("Skipping LLM summary due to missing API Key.")
-             return
+        config = load_config()
+        provider = get_provider(config)
 
-        response = await client.chat.completions.create(
-            model=model,
+        try:
+            await provider._check_api_key()
+        except ValueError:
+            print("Skipping LLM summary due to missing API Key.")
+            return
+
+        response = await provider.chat(
             messages=[
                 {"role": "system", "content": "You are a helpful assistant. Summarize the following chat logs and extract key events (facts/todos) as a JSON list."},
                 {"role": "user", "content": f"Chat Logs:\n{log_text}\n\nProvide response in JSON format: {{'summary': 'text', 'key_events': ['event1', 'event2']}}"}
-            ],
-            response_format={"type": "json_object"}
+            ]
         )
-        content = response.choices[0].message.content
+        content = response.content
         data = json.loads(content)
         summary_text = data.get('summary', '')
         key_events = json.dumps(data.get('key_events', []))

@@ -6,7 +6,7 @@ import uuid
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QHBoxLayout, QTextEdit, QLineEdit, QPushButton,
                              QLabel, QDialog, QMessageBox, QTableWidget, QTableWidgetItem, QHeaderView, QDateTimeEdit,
-                             QMenu, QFileDialog, QSizeGrip, QFormLayout)
+                             QMenu, QFileDialog, QSizeGrip, QFormLayout, QComboBox)
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QObject
 from PyQt6.QtGui import QColor, QPalette, QPainter, QBrush, QPen, QAction, QPixmap, QTextCursor
 
@@ -94,16 +94,22 @@ class SettingsDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("AI Configuration")
-        self.resize(400, 200)
+        self.resize(400, 250)
         layout = QFormLayout()
 
         self.config = load_config()
         llm_config = self.config.get('llm', {})
 
+        self.api_type_combo = QComboBox()
+        self.api_type_combo.addItems(["openai", "anthropic"])
+        current_type = llm_config.get('api_type', 'openai')
+        self.api_type_combo.setCurrentText(current_type)
+
         self.api_key_edit = QLineEdit(llm_config.get('api_key', ''))
         self.base_url_edit = QLineEdit(llm_config.get('base_url', ''))
         self.model_edit = QLineEdit(llm_config.get('model', 'gpt-3.5-turbo'))
 
+        layout.addRow("Provider:", self.api_type_combo)
         layout.addRow("API Key:", self.api_key_edit)
         layout.addRow("Base URL:", self.base_url_edit)
         layout.addRow("Model:", self.model_edit)
@@ -123,6 +129,7 @@ class SettingsDialog(QDialog):
         if 'llm' not in self.config:
             self.config['llm'] = {}
 
+        self.config['llm']['api_type'] = self.api_type_combo.currentText()
         self.config['llm']['api_key'] = self.api_key_edit.text()
         self.config['llm']['base_url'] = self.base_url_edit.text()
         self.config['llm']['model'] = self.model_edit.text()
